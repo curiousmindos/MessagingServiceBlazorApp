@@ -1,0 +1,134 @@
+﻿@page "/messaging-system-page"
+@using MessagingServiceBlazorApp.Features.Messaging.Services
+
+@attribute [StreamRendering]
+@rendermode InteractiveServer
+
+@inject IMessagingBrokerClient client
+
+<h2>Messaging Client: Publisher and Consumer</h2>
+
+
+<Tabs EnableFadeEffect="true" @rendermode="InteractiveServer">
+    <Tab Title="Messaging Producer" Active="true">
+        <Content>
+            <p class="mt-3">Publish a message.</p>
+            <div class="col-md-6 w-70">
+                <label class="form-label">Topic Name:</label>
+                <InputText @bind-Value="topicName" class="px-sm-2 w-70" />
+                <Spinner Class="me-3" Visible="isLoading" Type="SpinnerType.Dots" Color="SpinnerColor.Danger" Size="SpinnerSize.ExtraLarge" />
+
+                <Button Color="ButtonColor.Primary" class="me-2" Disabled="@(string.IsNullOrEmpty(topicName) || string.IsNullOrEmpty(messageContent))" @onclick="publish">
+                    Publish
+                </Button><p />
+            </div>
+            <div class="col-md-6 w-50">
+                <InputTextArea @bind-Value="@messageContent" rows="5" class="px-md-2 border-1 w-100"></InputTextArea>
+            </div>
+        </Content>
+    </Tab>
+    <Tab Title="Messaging Consumer">
+        <Content>
+            <p class="mt-3">Consume messages.</p>
+            <div class="col-md-6 w-70">
+                <label class="form-label">Topic Name:</label>
+                <InputText @bind-Value="consumeTopicName" class="px-sm-2 w-70" />
+                <Spinner Class="me-3" Visible="isLoading" Type="SpinnerType.Dots" Color="SpinnerColor.Danger" Size="SpinnerSize.ExtraLarge" />
+
+                <Button Color="ButtonColor.Primary" class="me-2" Disabled="@(string.IsNullOrEmpty(consumeTopicName))" @onclick="startConsume">
+                    @Title
+                </Button><p />
+            </div>
+        </Content>
+    </Tab>
+</Tabs>
+
+<h5> Events:</h5>
+
+<Grid TItem="EventTrack"
+      Class="table table-hover table-bordered table-striped w-100"
+      EmptyText="no records to display"
+      Data="events"
+      AllowPaging="true"
+      PageSize="10"
+      @ref="grid"
+      AllowSorting="true"
+      Responsive="true">
+
+    <GridColumn TItem="EventTrack" HeaderText="Date" PropertyName="EventTime" SortKeySelector="item => item.EventTime">
+        <span style="font-size:small">@context.EventTime</span>
+    </GridColumn>
+    <GridColumn TItem="EventTrack" HeaderText="Source" PropertyName="Topic" SortKeySelector="item => item.Topic">
+        <span style="font-size:small">@context.Topic</span>
+    </GridColumn>
+    <GridColumn TItem="EventTrack" HeaderText="Message" PropertyName="Message" SortKeySelector="item => item.Message">
+        <span class="@(context.IsError ? "text-danger" :"text-primary") justify-content-lg-start font-size:small">@context.Message</span>
+    </GridColumn>
+</Grid>
+
+
+@code {
+    private bool isLoading = default!;
+    record EventTrack(DateTime EventTime, string Topic, string Message, bool IsError = false);
+    private List<EventTrack> events = new();
+    Grid<EventTrack> grid = default!;
+
+    // publish part
+    private string? messageContent = "sample text to publish to selected topic";
+    private string? topicName = default!;
+    
+    // consume part
+    private string? consumeTopicName = default!;    
+    private bool isStarted = false;
+    private string Title => !isStarted ? "Start Listening" : "Stop Listening";
+    private CancellationToken token;
+    private CancellationTokenSource source;
+
+    protected override async Task OnInitializedAsync()
+    {
+        events.Add(new(DateTime.Now, "web app", "Initialized"));
+        source = new CancellationTokenSource();
+        token = source.Token;
+
+        client.MessageConsumed += MessageConsumedEvent!;
+    }
+
+    private async Task publish()
+    {
+        var result = await client.PublishAsync(topicName!, messageContent!);
+        events.Add(new(DateTime.Now, topicName! + " topic", "Publish new message"));
+        events.Add(new(DateTime.Now, topicName! + " topic", result));
+        grid.RefreshDataAsync();
+        StateHasChanged();
+    }
+
+    private async Task MessageConsumedEvent(object sender, string e)
+    {
+        await InvokeAsync(() =>
+        {
+            events.Add(new(DateTime.Now, consumeTopicName! + " topic", e));
+            grid.RefreshDataAsync();
+            StateHasChanged();
+        });
+    }
+
+    private async Task startConsume()
+    {
+        if (!isStarted)
+        {
+            await InvokeAsync(() =>
+            {
+                client.StartListeningAsync(consumeTopicName!, token);
+                events.Add(new(DateTime.Now, "web app", "start listening.."));
+                isStarted = true;
+            });
+        }
+        else
+        {
+            source.Cancel();
+
+            client.StopListening(token);
+            isStarted = false;
+        }
+    }
+}
